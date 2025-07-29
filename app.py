@@ -195,6 +195,8 @@ def handle_login(n_clicks, email, username):
 )
 def handle_logout(n_clicks):
     """Logs the user out by clearing the session data."""
+    if n_clicks is None:
+        return no_update
     return None # Setting data to None effectively logs them out
 
 @app.callback(
@@ -275,7 +277,14 @@ def render_wallet_tab(user_id):
 )
 def add_credit_card(n_clicks, user_id, card_number):
     """Adds a new credit card for the user."""
-    if not card_number or not card_number.isdigit() or len(card_number) != 16:
+    if not card_number:
+        cards = get_user_cards(user_id)
+        card_list = [dbc.ListGroupItem(f"**** **** **** {card['card_number'][-4:]}") for card in cards]
+        card_options = [{'label': f"Card ending in {c['card_number'][-4:]}", 'value': c['id']} for c in cards]
+
+        return card_list, card_options, no_update
+
+    if not card_number.isdigit() or len(card_number) != 16:
         toast = dbc.Toast("Please enter a valid 16-digit card number.", header="Error", icon="danger", duration=4000)
         return no_update, no_update, toast
 
@@ -308,7 +317,7 @@ def buy_tokens(n_clicks, user_id, card_id):
         return no_update, no_update
 
     if not card_id:
-        toast = dbc.Toast("Please select a credit card first.", header="Error", icon="warning", duration=4000)
+        toast = dbc.Toast("Please add a credit card first.", header="Error", icon="warning", duration=4000)
         return no_update, toast
 
     button_id = ctx.triggered[0]['prop_id'].split('.')[0]
@@ -337,6 +346,7 @@ def render_slots_tab(user_id):
     """Renders the layout for the slots game."""
     return dbc.Card(
         dbc.CardBody([
+            dcc.Store(id='card-select-dropdown', storage_type='local'),
             html.H4("Slot Machine", className="card-title text-center"),
             html.P("Place your bet and pull the lever!", className="text-center"),
             # Reels Display
@@ -377,6 +387,9 @@ def render_slots_tab(user_id):
 )
 def play_slots(n_clicks, user_id, bet_amount):
     """Handles the logic for a single spin of the slot machine."""
+    if n_clicks is None:
+        return no_update, no_update, no_update, no_update, no_update, no_update
+    
     if not bet_amount or bet_amount <= 0:
         toast = dbc.Toast("Bet amount must be greater than 0.", header="Invalid Bet", icon="danger", duration=4000)
         return no_update, no_update, no_update, no_update, no_update, toast
@@ -449,6 +462,7 @@ def render_food_tab(user_id):
     )
     return dbc.Card(
         dbc.CardBody([
+            dcc.Store(id='card-select-dropdown', storage_type='local'),
             html.H4("Food & Refreshments", className="card-title text-center"),
             html.P("Use your winnings to buy a tasty treat!", className="text-center mb-4"),
             menu_table
