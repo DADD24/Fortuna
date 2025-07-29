@@ -1,0 +1,16 @@
+[build-system]
+requires = ["setuptools >= 77.0.3"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "fortuna"
+version = "0.0.0"
+dependencies = [
+    "dash",
+    "dash-bootstrap-components",
+    "psycopg2-binary"
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["fortuna"]

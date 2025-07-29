@@ -1,0 +1,15 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: timescale/timescaledb-ha:pg17
+    container_name: casino-db
+    environment:
+      POSTGRES_USER: casino_user
+      POSTGRES_PASSWORD: casino_password
+      POSTGRES_DB: casino_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - ./init.sql:/docker-entrypoint-initdb.d/init.sql
+    restart: unless-stopped
