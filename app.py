@@ -263,6 +263,15 @@ def render_wallet_tab(user_id):
                     ]
                 )
             ])
+        ]),
+        # Convert Tokens to Cash
+        dbc.Card([
+            dbc.CardHeader("Convert Tokens to Cash"),
+            dbc.CardBody([
+                html.P("You can convert tokens back to cash at a 1:1 rate."),
+                dbc.Input(id='convert-tokens-input', type='number', placeholder="Enter token amount", min=1, step=1),
+                dbc.Button("Convert", id='convert-tokens-button', color='danger', className='mt-3 w-100')
+                        ])
         ])
     ])
 
@@ -339,6 +348,43 @@ def buy_tokens(n_clicks, user_id, card_id):
 
     toast = dbc.Toast(f"Successfully purchased {amount_to_buy} tokens!", header="Purchase Complete", icon="success", duration=4000)
     return new_balance, toast
+
+# callback for token conversion
+@app.callback(
+    Output('user-tokens-display', 'children', allow_duplicate=True),
+    Output('notification-toast-container', 'children', allow_duplicate=True),
+    Input('convert-tokens-button', 'n_clicks'),
+    State('convert-tokens-input', 'value'),
+    State('user-session', 'data'),
+    prevent_initial_call=True
+)
+def convert_tokens(n_clicks, token_amount, user_id):
+    if not token_amount or token_amount <= 0:
+        toast = dbc.Toast("Please enter a valid token amount.", header="Invalid Input", icon="danger", duration=4000)
+        return no_update, toast
+
+    with conn.cursor(cursor_factory=psycopg2.extras.DictCursor) as cur:
+        cur.execute("SELECT tokens FROM users WHERE id = %s;", (user_id,))
+        user = cur.fetchone()
+
+        if user['tokens'] < token_amount:
+            toast = dbc.Toast("You don't have enough tokens.", header="Insufficient Tokens", icon="warning", duration=4000)
+            return no_update, toast
+
+        cur.execute(
+            "UPDATE users SET tokens = tokens - %s WHERE id = %s RETURNING tokens;",
+            (token_amount, user_id)
+        )
+        new_balance = cur.fetchone()['tokens']
+        cur.execute(
+            "INSERT INTO transactions (user_id, transaction_type, amount, description) VALUES (%s, %s, %s, %s);",
+            (user_id, 'convert_to_cash', -token_amount, f"Converted {token_amount} tokens to cash.")
+        )
+        conn.commit()
+
+    toast = dbc.Toast(f"Converted {token_amount} tokens into cash!", header="Success", icon="success", duration=4000)
+    return new_balance, toast
+
 
 
 # --- Slots Tab ---

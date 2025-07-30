@@ -23,7 +23,7 @@ CREATE TABLE transactions (
     id SERIAL PRIMARY KEY,
     user_id INTEGER NOT NULL,
     card_id INTEGER,
-    transaction_type VARCHAR(50) NOT NULL, -- e.g., 'purchase_tokens', 'slot_win', 'food_purchase'
+    transaction_type VARCHAR(50) NOT NULL, -- e.g., 'purchase_tokens', 'slot_win', 'food_purchase', 'convert_to_cash'
     amount INTEGER NOT NULL, -- Can be positive (win) or negative (purchase)
     description TEXT,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
