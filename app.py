@@ -136,6 +136,7 @@ def create_main_layout(user_data):
                 dbc.Tab(label="Slots", tab_id="tab-slots"),
                 dbc.Tab(label="Wallet", tab_id="tab-wallet"),
                 dbc.Tab(label="Food Station", tab_id="tab-food"),
+                dbc.Tab(label='History', tab_id='history-tab')
             ],
         ),
         html.Div(id="tab-content", className="p-4")
@@ -214,6 +215,8 @@ def render_tab_content(active_tab, user_id):
         return render_slots_tab(user_id)
     elif active_tab == "tab-food":
         return render_food_tab(user_id)
+    elif active_tab == 'history-tab':
+        return render_history_tab(user_id)
     return html.P("This is the content of the selected tab.")
 
 # --- Wallet Tab ---
@@ -480,6 +483,16 @@ def play_slots(n_clicks, user_id, bet_amount):
             "INSERT INTO slots_spins (user_id, bet_amount, reels, is_win, payout_amount) VALUES (%s, %s, %s, %s, %s);",
             (user_id, bet_amount, '-'.join(reels), is_win, payout_amount)
         )
+        # Log into transactions table
+        cur.execute(
+            "INSERT INTO transactions (user_id, transaction_type, amount, description) VALUES (%s, %s, %s, %s);",
+            (
+                user_id,
+                'slot_win' if is_win else 'slot_loss',
+                token_change,
+                result_message
+            )
+        )
         conn.commit()
 
     return reels[0], reels[1], reels[2], html.Span(result_message, style=result_style), new_balance, no_update
@@ -567,6 +580,63 @@ def buy_food(n_clicks, user_id):
 
     toast = dbc.Toast(f"You purchased a {item['name']}! Enjoy!", header="Order Up!", icon="success", duration=4000)
     return new_balance, toast
+
+
+# Transaction History
+def render_history_tab(user_id):
+    return dbc.Container([
+        dbc.Card([
+            dbc.CardHeader(
+                dbc.Button("View Action History", id="toggle-history", color="secondary", className="w-100")
+            ),
+            dbc.Collapse(
+                dbc.CardBody(html.Div(id='history-log')),
+                id="history-collapse",
+                is_open=False
+            )
+        ])
+    ])
+
+@app.callback(
+    Output("history-collapse", "is_open"),
+    Input("toggle-history", "n_clicks"),
+    State("history-collapse", "is_open"),
+    prevent_initial_call=True
+)
+def toggle_history(n, is_open):
+    return not is_open
+
+@app.callback(
+    Output("history-log", "children"),
+    Input("history-collapse", "is_open"),
+    State("user-session", "data"),
+    prevent_initial_call=True
+)
+def load_history(is_open, user_id):
+    if not is_open:
+        return no_update
+
+    with conn.cursor(cursor_factory=psycopg2.extras.DictCursor) as cur:
+        cur.execute("""
+            SELECT transaction_type, amount, description, created_at
+            FROM transactions
+            WHERE user_id = %s
+            ORDER BY created_at DESC
+            LIMIT 20;
+        """, (user_id,))
+        logs = cur.fetchall()
+
+    if not logs:
+        return html.P("No transactions yet.")
+
+    return dbc.ListGroup([
+        dbc.ListGroupItem([
+            html.Strong(f"{log['transaction_type'].replace('_', ' ').title()}: "),
+            f"{log['description']} ({log['amount']} tokens) – ",
+            html.Span(log['created_at'].strftime('%Y-%m-%d %H:%M:%S'), className="text-muted")
+        ])
+        for log in logs
+    ])
 
 
 # --- Main Execution ---
