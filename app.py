@@ -134,6 +134,7 @@ def create_main_layout(user_data):
             active_tab="tab-slots",
             children=[
                 dbc.Tab(label="Slots", tab_id="tab-slots"),
+                dbc.Tab(label="Blackjack", tab_id="tab-blackjack"),
                 dbc.Tab(label="Wallet", tab_id="tab-wallet"),
                 dbc.Tab(label="Food Station", tab_id="tab-food"),
                 dbc.Tab(label='History', tab_id='history-tab')
@@ -213,6 +214,8 @@ def render_tab_content(active_tab, user_id):
         return render_wallet_tab(user_id)
     elif active_tab == "tab-slots":
         return render_slots_tab(user_id)
+    elif active_tab == "tab-blackjack":
+        return render_blackjack_tab(user_id)
     elif active_tab == "tab-food":
         return render_food_tab(user_id)
     elif active_tab == 'history-tab':
@@ -496,6 +499,360 @@ def play_slots(n_clicks, user_id, bet_amount):
         conn.commit()
 
     return reels[0], reels[1], reels[2], html.Span(result_message, style=result_style), new_balance, no_update
+
+
+# --- Blackjack Helper Functions ---
+def create_deck():
+    """Creates a standard 52-card deck."""
+    suits = ['♠', '♥', '♦', '♣']
+    ranks = ['A', '2', '3', '4', '5', '6', '7', '8', '9', '10', 'J', 'Q', 'K']
+    return [{'rank': rank, 'suit': suit} for suit in suits for rank in ranks]
+
+def get_card_value(card, current_score=0):
+    """Returns the value of a card in blackjack."""
+    if card['rank'] in ['J', 'Q', 'K']:
+        return 10
+    elif card['rank'] == 'A':
+        # Ace is 11 unless it would bust, then it's 1
+        return 11 if current_score + 11 <= 21 else 1
+    else:
+        return int(card['rank'])
+
+def calculate_hand_value(hand):
+    """Calculates the total value of a hand, handling Aces properly."""
+    value = 0
+    aces = 0
+    
+    for card in hand:
+        if card['rank'] == 'A':
+            aces += 1
+            value += 11
+        elif card['rank'] in ['J', 'Q', 'K']:
+            value += 10
+        else:
+            value += int(card['rank'])
+    
+    # Convert Aces from 11 to 1 if needed
+    while value > 21 and aces > 0:
+        value -= 10
+        aces -= 1
+    
+    return value
+
+def format_card(card):
+    """Formats a card for display."""
+    return f"{card['rank']}{card['suit']}"
+
+def format_hand(hand):
+    """Formats a hand for display."""
+    return " ".join([format_card(card) for card in hand])
+
+# --- Blackjack Tab ---
+def render_blackjack_tab(user_id):
+    """Renders the layout for the blackjack game."""
+    return dbc.Card(
+        dbc.CardBody([
+            dcc.Store(id='blackjack-game-state', data={
+                'deck': [],
+                'player_hand': [],
+                'dealer_hand': [],
+                'game_active': False,
+                'dealer_turn': False
+            }),
+            html.H4("Blackjack", className="card-title text-center"),
+            html.P("Beat the dealer to 21!", className="text-center"),
+            
+            # Dealer's Hand
+            dbc.Row([
+                dbc.Col([
+                    html.H5("Dealer's Hand", className="text-center"),
+                    html.Div(id='dealer-hand-display', className="fs-4 text-center p-3 border rounded bg-light text-dark mb-2"),
+                    html.Div(id='dealer-score-display', className="text-center fw-bold")
+                ], width=12)
+            ], className="mb-4"),
+            
+            # Player's Hand
+            dbc.Row([
+                dbc.Col([
+                    html.H5("Your Hand", className="text-center"),
+                    html.Div(id='player-hand-display', className="fs-4 text-center p-3 border rounded bg-light text-dark mb-2"),
+                    html.Div(id='player-score-display', className="text-center fw-bold")
+                ], width=12)
+            ], className="mb-4"),
+            
+            # Bet Amount
+            dbc.InputGroup(
+                [
+                    dbc.InputGroupText("Bet Amount"),
+                    dbc.Input(id='blackjack-bet-amount', type='number', value=10, min=1, step=1),
+                ],
+                className="mb-3"
+            ),
+            
+            # Game Controls
+            dbc.Row([
+                dbc.Col([
+                    dbc.Button("Deal", id='deal-button', color='success', size='lg', className='w-100 mb-2'),
+                    dbc.Button("Hit", id='hit-button', color='warning', size='lg', className='w-100 mb-2', disabled=True),
+                    dbc.Button("Stand", id='stand-button', color='danger', size='lg', className='w-100 mb-2', disabled=True),
+                ], width=12)
+            ]),
+            
+            # Game Result
+            html.Div(id='blackjack-result-message', className="mt-3 text-center fs-4 fw-bold")
+        ])
+    )
+
+@app.callback(
+    Output('blackjack-game-state', 'data'),
+    Output('player-hand-display', 'children'),
+    Output('dealer-hand-display', 'children'),
+    Output('player-score-display', 'children'),
+    Output('dealer-score-display', 'children'),
+    Output('deal-button', 'disabled'),
+    Output('hit-button', 'disabled'),
+    Output('stand-button', 'disabled'),
+    Output('blackjack-result-message', 'children'),
+    Output('user-tokens-display', 'children', allow_duplicate=True),
+    Output('notification-toast-container', 'children', allow_duplicate=True),
+    Input('deal-button', 'n_clicks'),
+    Input('hit-button', 'n_clicks'),
+    Input('stand-button', 'n_clicks'),
+    State('blackjack-game-state', 'data'),
+    State('user-session', 'data'),
+    State('blackjack-bet-amount', 'value'),
+    prevent_initial_call=True
+)
+def play_blackjack(deal_clicks, hit_clicks, stand_clicks, game_state, user_id, bet_amount):
+    """Handles the blackjack game logic."""
+    import json
+    
+    ctx = dash.callback_context
+    if not ctx.triggered:
+        return no_update, no_update, no_update, no_update, no_update, no_update, no_update, no_update, no_update, no_update, no_update
+    
+    button_id = ctx.triggered[0]['prop_id'].split('.')[0]
+    
+    # Initialize default returns
+    new_game_state = game_state.copy()
+    player_display = ""
+    dealer_display = ""
+    player_score_text = ""
+    dealer_score_text = ""
+    deal_disabled = False
+    hit_disabled = True
+    stand_disabled = True
+    result_message = ""
+    new_token_balance = no_update
+    toast = no_update
+    
+    if button_id == 'deal-button':
+        # Validate bet
+        if not bet_amount or bet_amount <= 0:
+            toast = dbc.Toast("Bet amount must be greater than 0.", header="Invalid Bet", icon="danger", duration=4000)
+            return no_update, no_update, no_update, no_update, no_update, no_update, no_update, no_update, no_update, no_update, toast
+        
+        user = get_user(user_id)
+        if user['tokens'] < bet_amount:
+            toast = dbc.Toast("Not enough tokens for this bet.", header="Insufficient Funds", icon="warning", duration=4000)
+            return no_update, no_update, no_update, no_update, no_update, no_update, no_update, no_update, no_update, no_update, toast
+        
+        # Start new game
+        deck = create_deck()
+        random.shuffle(deck)
+        
+        # Deal initial cards
+        player_hand = [deck.pop(), deck.pop()]
+        dealer_hand = [deck.pop(), deck.pop()]
+        
+        new_game_state = {
+            'deck': deck,
+            'player_hand': player_hand,
+            'dealer_hand': dealer_hand,
+            'game_active': True,
+            'dealer_turn': False,
+            'bet_amount': bet_amount
+        }
+        
+        player_score = calculate_hand_value(player_hand)
+        dealer_score = calculate_hand_value([dealer_hand[0]])  # Only show first card
+        
+        player_display = format_hand(player_hand)
+        dealer_display = f"{format_card(dealer_hand[0])} ??"  # Hide second card
+        player_score_text = f"Score: {player_score}"
+        dealer_score_text = f"Score: {calculate_hand_value([dealer_hand[0]])}"
+        
+        # Check for blackjack
+        if player_score == 21:
+            # Player blackjack
+            dealer_score_full = calculate_hand_value(dealer_hand)
+            dealer_display = format_hand(dealer_hand)
+            dealer_score_text = f"Score: {dealer_score_full}"
+            
+            if dealer_score_full == 21:
+                # Push
+                result_message = "Push! Both have blackjack."
+                payout = 0
+                game_result = 'push'
+            else:
+                # Player blackjack wins
+                result_message = "BLACKJACK! You win!"
+                payout = int(bet_amount * 2.5)  # 3:2 payout
+                game_result = 'blackjack'
+            
+            # Update tokens and log game
+            token_change = payout - bet_amount
+            with conn.cursor(cursor_factory=psycopg2.extras.DictCursor) as cur:
+                cur.execute(
+                    "UPDATE users SET tokens = tokens + %s WHERE id = %s RETURNING tokens;",
+                    (token_change, user_id)
+                )
+                new_token_balance = cur.fetchone()['tokens']
+                
+                # Log the game
+                cur.execute(
+                    "INSERT INTO blackjack_games (user_id, bet_amount, player_hand, dealer_hand, player_score, dealer_score, game_result, payout_amount) VALUES (%s, %s, %s, %s, %s, %s, %s, %s);",
+                    (user_id, bet_amount, json.dumps(player_hand), json.dumps(dealer_hand), player_score, dealer_score_full, game_result, payout)
+                )
+                
+                # Log transaction
+                cur.execute(
+                    "INSERT INTO transactions (user_id, transaction_type, amount, description) VALUES (%s, %s, %s, %s);",
+                    (user_id, f'blackjack_{game_result}', token_change, result_message)
+                )
+                conn.commit()
+            
+            new_game_state['game_active'] = False
+            deal_disabled = False
+            hit_disabled = True
+            stand_disabled = True
+        else:
+            # Game continues
+            deal_disabled = True
+            hit_disabled = False
+            stand_disabled = False
+    
+    elif button_id == 'hit-button' and game_state.get('game_active'):
+        # Player hits
+        deck = game_state['deck']
+        player_hand = game_state['player_hand'] + [deck.pop()]
+        dealer_hand = game_state['dealer_hand']
+        
+        new_game_state = game_state.copy()
+        new_game_state['deck'] = deck
+        new_game_state['player_hand'] = player_hand
+        
+        player_score = calculate_hand_value(player_hand)
+        player_display = format_hand(player_hand)
+        dealer_display = f"{format_card(dealer_hand[0])} ??"
+        player_score_text = f"Score: {player_score}"
+        dealer_score_text = f"Score: {calculate_hand_value([dealer_hand[0]])}"
+        
+        if player_score > 21:
+            # Player busts
+            dealer_score_full = calculate_hand_value(dealer_hand)
+            dealer_display = format_hand(dealer_hand)
+            dealer_score_text = f"Score: {dealer_score_full}"
+            result_message = "Bust! You lose."
+            
+            # Update tokens and log game
+            token_change = -game_state['bet_amount']
+            with conn.cursor(cursor_factory=psycopg2.extras.DictCursor) as cur:
+                cur.execute(
+                    "UPDATE users SET tokens = tokens + %s WHERE id = %s RETURNING tokens;",
+                    (token_change, user_id)
+                )
+                new_token_balance = cur.fetchone()['tokens']
+                
+                # Log the game
+                cur.execute(
+                    "INSERT INTO blackjack_games (user_id, bet_amount, player_hand, dealer_hand, player_score, dealer_score, game_result, payout_amount) VALUES (%s, %s, %s, %s, %s, %s, %s, %s);",
+                    (user_id, game_state['bet_amount'], json.dumps(player_hand), json.dumps(dealer_hand), player_score, dealer_score_full, 'lose', 0)
+                )
+                
+                # Log transaction
+                cur.execute(
+                    "INSERT INTO transactions (user_id, transaction_type, amount, description) VALUES (%s, %s, %s, %s);",
+                    (user_id, 'blackjack_lose', token_change, result_message)
+                )
+                conn.commit()
+            
+            new_game_state['game_active'] = False
+            deal_disabled = False
+            hit_disabled = True
+            stand_disabled = True
+        else:
+            # Game continues
+            deal_disabled = True
+            hit_disabled = False
+            stand_disabled = False
+    
+    elif button_id == 'stand-button' and game_state.get('game_active'):
+        # Player stands, dealer plays
+        deck = game_state['deck']
+        player_hand = game_state['player_hand']
+        dealer_hand = game_state['dealer_hand'].copy()
+        
+        player_score = calculate_hand_value(player_hand)
+        dealer_score = calculate_hand_value(dealer_hand)
+        
+        # Dealer hits until 17 or higher
+        while dealer_score < 17:
+            dealer_hand.append(deck.pop())
+            dealer_score = calculate_hand_value(dealer_hand)
+        
+        player_display = format_hand(player_hand)
+        dealer_display = format_hand(dealer_hand)
+        player_score_text = f"Score: {player_score}"
+        dealer_score_text = f"Score: {dealer_score}"
+        
+        # Determine winner
+        if dealer_score > 21:
+            result_message = "Dealer busts! You win!"
+            payout = game_state['bet_amount'] * 2
+            game_result = 'win'
+        elif dealer_score > player_score:
+            result_message = "Dealer wins!"
+            payout = 0
+            game_result = 'lose'
+        elif player_score > dealer_score:
+            result_message = "You win!"
+            payout = game_state['bet_amount'] * 2
+            game_result = 'win'
+        else:
+            result_message = "Push!"
+            payout = game_state['bet_amount']  # Return bet
+            game_result = 'push'
+        
+        # Update tokens and log game
+        token_change = payout - game_state['bet_amount']
+        with conn.cursor(cursor_factory=psycopg2.extras.DictCursor) as cur:
+            cur.execute(
+                "UPDATE users SET tokens = tokens + %s WHERE id = %s RETURNING tokens;",
+                (token_change, user_id)
+            )
+            new_token_balance = cur.fetchone()['tokens']
+            
+            # Log the game
+            cur.execute(
+                "INSERT INTO blackjack_games (user_id, bet_amount, player_hand, dealer_hand, player_score, dealer_score, game_result, payout_amount) VALUES (%s, %s, %s, %s, %s, %s, %s, %s);",
+                (user_id, game_state['bet_amount'], json.dumps(player_hand), json.dumps(dealer_hand), player_score, dealer_score, game_result, payout)
+            )
+            
+            # Log transaction
+            cur.execute(
+                "INSERT INTO transactions (user_id, transaction_type, amount, description) VALUES (%s, %s, %s, %s);",
+                (user_id, f'blackjack_{game_result}', token_change, result_message)
+            )
+            conn.commit()
+        
+        new_game_state['game_active'] = False
+        deal_disabled = False
+        hit_disabled = True
+        stand_disabled = True
+    
+    return (new_game_state, player_display, dealer_display, player_score_text, dealer_score_text,
+            deal_disabled, hit_disabled, stand_disabled, result_message, new_token_balance, toast)
 
 
 # --- Food Station Tab ---

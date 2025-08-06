@@ -64,6 +64,21 @@ CREATE TABLE food_purchases (
     FOREIGN KEY (food_item_id) REFERENCES food_menu (id)
 );
 
+-- Create the blackjack_games table to log each blackjack game played.
+CREATE TABLE blackjack_games (
+    id SERIAL PRIMARY KEY,
+    user_id INTEGER NOT NULL,
+    bet_amount INTEGER NOT NULL,
+    player_hand TEXT NOT NULL, -- JSON string of player's cards
+    dealer_hand TEXT NOT NULL, -- JSON string of dealer's cards
+    player_score INTEGER NOT NULL,
+    dealer_score INTEGER NOT NULL,
+    game_result VARCHAR(20) NOT NULL, -- 'win', 'lose', 'push', 'blackjack'
+    payout_amount INTEGER NOT NULL,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE
+);
+
 -- Insert some default items into the food menu for demonstration.
 INSERT INTO food_menu (name, description, price) VALUES
 ('Casino Burger', 'A juicy all-beef patty with our special sauce.', 15),
