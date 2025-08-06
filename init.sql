@@ -64,19 +64,34 @@ CREATE TABLE food_purchases (
     FOREIGN KEY (food_item_id) REFERENCES food_menu (id)
 );
 
--- Create the blackjack_games table to log each blackjack game played.
-CREATE TABLE blackjack_games (
+-- Create the blackjack_rounds table to log each round (overall game session).
+CREATE TABLE blackjack_rounds (
     id SERIAL PRIMARY KEY,
     user_id INTEGER NOT NULL,
-    bet_amount INTEGER NOT NULL,
-    player_hand TEXT NOT NULL, -- JSON string of player's cards
+    initial_bet_amount INTEGER NOT NULL,
     dealer_hand TEXT NOT NULL, -- JSON string of dealer's cards
-    player_score INTEGER NOT NULL,
     dealer_score INTEGER NOT NULL,
-    game_result VARCHAR(20) NOT NULL, -- 'win', 'lose', 'push', 'blackjack'
-    payout_amount INTEGER NOT NULL,
+    round_status VARCHAR(20) NOT NULL, -- 'active', 'completed'
+    total_payout INTEGER DEFAULT 0,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    completed_at TIMESTAMP WITH TIME ZONE,
     FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE
+);
+
+-- Create the blackjack_hands table to log each individual hand (supports splits).
+CREATE TABLE blackjack_hands (
+    id SERIAL PRIMARY KEY,
+    round_id INTEGER NOT NULL,
+    hand_number INTEGER NOT NULL, -- 1 for first hand, 2+ for split hands
+    bet_amount INTEGER NOT NULL,
+    cards TEXT NOT NULL, -- JSON string of hand's cards
+    hand_score INTEGER NOT NULL,
+    hand_status VARCHAR(20) NOT NULL, -- 'active', 'stand', 'bust', 'blackjack', 'doubled'
+    hand_result VARCHAR(20), -- 'win', 'lose', 'push', 'blackjack' (filled when round completes)
+    payout_amount INTEGER DEFAULT 0,
+    is_doubled BOOLEAN DEFAULT FALSE,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (round_id) REFERENCES blackjack_rounds (id) ON DELETE CASCADE
 );
 
 -- Insert some default items into the food menu for demonstration.
