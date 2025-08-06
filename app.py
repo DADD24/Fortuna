@@ -438,7 +438,7 @@ def play_slots(n_clicks, user_id, bet_amount):
     """Handles the logic for a single spin of the slot machine."""
     if n_clicks is None:
         return no_update, no_update, no_update, no_update, no_update, no_update
-    
+
     if not bet_amount or bet_amount <= 0:
         toast = dbc.Toast("Bet amount must be greater than 0.", header="Invalid Bet", icon="danger", duration=4000)
         return no_update, no_update, no_update, no_update, no_update, toast
@@ -538,7 +538,8 @@ def render_food_tab(user_id):
 def buy_food(n_clicks, user_id):
     """Handles the logic for purchasing a food item."""
     ctx = dash.callback_context
-    if not ctx.triggered or not any(n_clicks):
+
+    if not ctx.triggered or not any(click for click in n_clicks if click is not None):
         return no_update, no_update
 
     button_id = ctx.triggered[0]['prop_id'].split('.')[0]
