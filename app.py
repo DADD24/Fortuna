@@ -403,6 +403,26 @@ def render_wallet_tab(user_id):
                     ),
                 ]
             ),
+        # View CC transactions
+        dbc.Card(
+            [
+                    dbc.CardHeader("View Transactions by Credit Card"),
+                    dbc.CardBody(
+                        [
+                            dbc.Select(
+                                id="transaction-card-select",
+                                options=[
+                                    {"label": f"Card ending in {c['card_number'][-4:]}", "value": c["id"]}
+                                    for c in cards
+                                ],
+                                placeholder="Select a card to view transactions",
+                            ),
+                            html.Div(id="transactions-list-container", className="mt-3"),
+                        ]
+                    ),
+                ],
+                className="mt-4",
+            ),
         ]
     )
 
@@ -410,6 +430,7 @@ def render_wallet_tab(user_id):
 @app.callback(
     Output("card-list-group", "children"),
     Output("card-select-dropdown", "options"),
+    Output("transaction-card-select", "options"),
     Output("notification-toast-container", "children", allow_duplicate=True),
     Input("add-card-button", "n_clicks"),
     State("user-session", "data"),
@@ -429,7 +450,7 @@ def add_credit_card(n_clicks, user_id, card_number):
             for c in cards
         ]
 
-        return card_list, card_options, no_update
+        return card_list, card_options, card_options, no_update
 
     if not card_number.isdigit() or len(card_number) != 16:
         toast = dbc.Toast(
@@ -438,7 +459,7 @@ def add_credit_card(n_clicks, user_id, card_number):
             icon="danger",
             duration=4000,
         )
-        return no_update, no_update, toast
+        return no_update, no_update, no_update, toast
 
     with conn.cursor() as cur:
         cur.execute(
@@ -463,7 +484,7 @@ def add_credit_card(n_clicks, user_id, card_number):
         duration=4000,
     )
 
-    return card_list, card_options, toast
+    return card_list, card_options, card_options, toast
 
 
 @app.callback(
@@ -576,6 +597,50 @@ def convert_tokens(n_clicks, token_amount, user_id):
         duration=4000,
     )
     return new_balance, toast
+
+# callback for viewing transactions
+@app.callback(
+    Output("transactions-list-container", "children"),
+    Input("transaction-card-select", "value"),
+    State("user-session", "data"),
+    prevent_initial_call=True,
+)
+def show_card_transactions(card_id, user_id):
+    if not card_id:
+        return "Please select a card to view transactions."
+
+    with conn.cursor(cursor_factory=psycopg2.extras.DictCursor) as cur:
+        # Multi-table query joining credit_cards and transactions on card_id
+        cur.execute(
+            """
+            SELECT t.id, t.transaction_type, t.amount, t.description, t.created_at
+            FROM transactions t
+            JOIN credit_cards c ON t.card_id = c.id
+            WHERE c.id = %s AND c.user_id = %s
+            ORDER BY t.created_at DESC
+            """,
+            (card_id, user_id),
+        )
+        transactions = cur.fetchall()
+
+    if not transactions:
+        return "No transactions found for this card."
+
+    # Create a list group or table of transactions
+    items = []
+    for tx in transactions:
+        items.append(
+            dbc.ListGroupItem(
+                [
+                    html.Div(f"Type: {tx['transaction_type']}"),
+                    html.Div(f"Amount: {tx['amount']}"),
+                    html.Div(f"Description: {tx['description']}"),
+                    html.Div(f"Date: {tx['created_at'].strftime('%Y-%m-%d %H:%M:%S')}"),
+                ]
+            )
+        )
+
+    return dbc.ListGroup(items)
 
 
 # --- Slots Tab ---
