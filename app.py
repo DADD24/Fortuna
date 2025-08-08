@@ -386,6 +386,15 @@ def render_wallet_tab(user_id):
                             html.P(
                                 "You can convert tokens back to cash at a 1:1 rate."
                             ),
+                            dbc.Select(
+                                id="convert-card-select-dropdown",
+                                options=[
+                                    {"label": f"Card ending in {c['card_number'][-4:]}", "value": c["id"]}
+                                    for c in cards
+                                ],
+                                placeholder="Select a card to convert tokens to cash",
+                                className="mb-3",
+                            ),
                             dbc.Input(
                                 id="convert-tokens-input",
                                 type="number",
@@ -548,15 +557,25 @@ def buy_tokens(n_clicks, user_id, card_id):
     Output("notification-toast-container", "children", allow_duplicate=True),
     Input("convert-tokens-button", "n_clicks"),
     State("convert-tokens-input", "value"),
+    State("convert-card-select-dropdown", "value"),
     State("user-session", "data"),
     prevent_initial_call=True,
 )
-def convert_tokens(n_clicks, token_amount, user_id):
+def convert_tokens(n_clicks, token_amount, card_id, user_id):
     if not token_amount or token_amount <= 0:
         toast = dbc.Toast(
             "Please enter a valid token amount.",
             header="Invalid Input",
             icon="danger",
+            duration=4000,
+        )
+        return no_update, toast
+
+    if not card_id:
+        toast = dbc.Toast(
+            "Please select a card to receive the cash.",
+            header="No Card Selected",
+            icon="warning",
             duration=4000,
         )
         return no_update, toast
@@ -580,13 +599,12 @@ def convert_tokens(n_clicks, token_amount, user_id):
         )
         new_balance = cur.fetchone()["tokens"]
         cur.execute(
-            "INSERT INTO transactions (user_id, transaction_type, amount, description) VALUES (%s, %s, %s, %s);",
-            (
-                user_id,
-                "convert_to_cash",
-                -token_amount,
-                f"Converted {token_amount} tokens to cash.",
-            ),
+            """
+            INSERT INTO transactions
+            (user_id, card_id, transaction_type, amount, description)
+            VALUES (%s, %s, %s, %s, %s);
+            """,
+            (user_id, card_id, "convert_to_cash", -token_amount, f"Converted {token_amount} tokens to cash."),
         )
         conn.commit()
 
@@ -1777,12 +1795,13 @@ def load_history(is_open, user_id):
     with conn.cursor(cursor_factory=psycopg2.extras.DictCursor) as cur:
         cur.execute(
             """
-            SELECT transaction_type, amount, description, created_at
-            FROM transactions
-            WHERE user_id = %s
-            ORDER BY created_at DESC
+            SELECT t.transaction_type, t.amount, t.description, t.created_at, c.card_number
+            FROM transactions t
+            LEFT JOIN credit_cards c ON t.card_id = c.id
+            WHERE t.user_id = %s
+            ORDER BY t.created_at DESC
             LIMIT 20;
-        """,
+            """,
             (user_id,),
         )
         logs = cur.fetchall()
@@ -1790,24 +1809,25 @@ def load_history(is_open, user_id):
     if not logs:
         return html.P("No transactions yet.")
 
-    return dbc.ListGroup(
-        [
+    items = []
+    for log in logs:
+        card_display = (
+            f" (Card ending in {log['card_number'][-4:]})" if log["card_number"] else ""
+        )
+        items.append(
             dbc.ListGroupItem(
                 [
-                    html.Strong(
-                        f"{log['transaction_type'].replace('_', ' ').title()}: "
-                    ),
-                    f"{log['description']} ({log['amount']} tokens) – ",
+                    html.Strong(f"{log['transaction_type'].replace('_', ' ').title()}: "),
+                    f"{log['description']} ({log['amount']} tokens){card_display} – ",
                     html.Span(
                         log["created_at"].strftime("%Y-%m-%d %H:%M:%S"),
                         className="text-muted",
                     ),
                 ]
             )
-            for log in logs
-        ]
-    )
+        )
 
+    return dbc.ListGroup(items)
 
 # --- Main Execution ---
 if __name__ == "__main__":
